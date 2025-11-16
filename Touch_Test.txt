@@ -1,0 +1,48 @@
+#include <XPT2046_Touchscreen.h>
+#include <SPI.h>
+
+// =========================================================================
+// SPI & TOUCH PINS (FROM YOUR TABLE)
+// =========================================================================
+#define TOUCH_SPI_MISO 39
+#define TOUCH_SPI_MOSI 32
+#define TOUCH_SPI_SCLK 25
+#define TOUCH_CS 33
+#define TOUCH_IRQ 36
+
+// Use the valid constructor (CS, IRQ)
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ); 
+// =========================================================================
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+
+  Serial.println("Starting TouchTest...");
+
+  // --- FIX ---
+  // Initialize the *global* SPI (VSPI) object with our custom pins
+  // (SCLK, MISO, MOSI)
+  SPI.begin(TOUCH_SPI_SCLK, TOUCH_SPI_MISO, TOUCH_SPI_MOSI);
+
+  // Initialize the touchscreen library
+  ts.begin();
+  ts.setRotation(1); // Set to 1 to match your main project
+
+  Serial.println("Touchscreen initialized. Ready to test.");
+  Serial.println("Press screen corners to get MIN/MAX x and y values.");
+}
+
+void loop() {
+  if (ts.touched()) {
+    TS_Point p = ts.getPoint();
+    Serial.print("Pressure = ");
+    Serial.print(p.z);
+    Serial.print(", x = ");
+    Serial.print(p.x);
+    Serial.print(", y = ");
+    Serial.print(p.y);
+    Serial.println();
+    delay(100); // Slow down the serial output
+  }
+}
