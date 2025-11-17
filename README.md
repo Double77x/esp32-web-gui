@@ -12,7 +12,7 @@ The device automatically rotates through user-defined lists of stocks and weathe
 
 ## Features
 
-* **Three-Mode Display:** Rotates between three pages:
+* **Two-Mode Display:** Rotates between two pages:
   * **Stocks:** Displays the ticker, current price, day's change, and a High/Low/Current price bar.
   * **Weather:** Shows the current temperature, a description, and a 3-day forecast (day, description, high/low).
 * **Touch Interface:** Tap the screen to toggle between the Stock and Weather pages.
