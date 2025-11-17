@@ -63,7 +63,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     /* Forms */
     form { margin-bottom: 1.5rem; }
     label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-    input[type=text], input[type=password], input[type=file] {
+    input[type=text], input[type=password], input[type=file], input[type=number] { /* Added number */
       width: 100%; padding: 12px 10px; font-size: 16px;
       border-radius: 8px; border: 1px solid var(--card-border);
       background: transparent; color: var(--text); outline: none; box-sizing: border-box;
@@ -117,7 +117,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       display: none;
     }
 
-    /* --- NEW: Themed Scrollbar --- */
+    /* --- Themed Scrollbar --- */
     /* For Firefox */
     * {
       scrollbar-width: thin;
@@ -138,9 +138,44 @@ const char index_html[] PROGMEM = R"rawliteral(
     ::-webkit-scrollbar-thumb:hover {
       background-color: var(--accent);
     }
+
+    /* --- Styles for Drag-and-Drop --- */
+    .drag-handle {
+      display: inline-block;
+      cursor: grab;
+      color: var(--muted);
+      margin-right: 10px;
+      padding: 0 5px;
+    }
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+    .list-item-text {
+      flex-grow: 1; /* Make text take up available space */
+    }
+    /* This is the placeholder style for Sortable.js */
+    .sortable-ghost {
+      opacity: 0.4;
+      background: var(--accent);
+    }
+
+    /* --- Outline Button Style --- */
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--red);
+      color: var(--red);
+      transition: all 0.2s;
+    }
+    .btn-outline:hover {
+      background: var(--red);
+      color: var(--card);
+    }
   </style>
 </head>
 <body>
+  <!-- Add Sortable.js library -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
   <div class="card">
     <h1>ESP32 WEB GUI</h1>
 
@@ -169,6 +204,15 @@ const char index_html[] PROGMEM = R"rawliteral(
     <!-- Tab 2: Rotation Settings -->
     <div id="settings" class="tab-content">
       
+      <!-- --- Rotation Timer --- -->
+      <h2>Rotation Timer</h2>
+      <form id="interval-form" action="/set_interval" method="GET" onsubmit="saveInterval(event, this)">
+        <label for="interval-sec">Rotation Interval (seconds)</label>
+        <input id="interval-sec" name="interval_sec" type="number" placeholder="e.g. 60" autocomplete="off" />
+        <button type="submit">Save Timer</button>
+      </form>
+      <!-- --- END --- -->
+
       <!-- Stock Ticker List -->
       <h2>Stock Rotation List</h2>
       <div id="stock-list"><!-- Items will be injected here --></div>
@@ -186,6 +230,14 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input id="location-add" name="location" type="text" placeholder="e.g. New York" autocomplete="off" />
         <button type="submit">Add Location</button>
       </form>
+
+      <!-- --- Restore Defaults --- -->
+      <h2 style="margin-top: 2rem;">Restore Defaults</h2>
+      <p style="font-size: 13px; color: var(--muted); margin-top: -0.5rem; margin-bottom: 1rem;">
+        This will clear your custom lists and restore the defaults from the firmware. Reboot the device manually after performing.
+      </p>
+      <button class="btn-outline" onclick="restoreDefaults(event)">Restore Default Lists</button>
+      <!-- --- END --- -->
 
     </div>
 
@@ -223,6 +275,9 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <script>
+    let stockSortable = null;
+    let locationSortable = null;
+
     function openTab(evt, tabName) {
       var i, tabcontent, tablinks;
       tabcontent = document.getElementsByClassName("tab-content");
@@ -242,7 +297,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
     }
 
-    // --- NEW UX FUNCTIONS ---
+    // --- UX FUNCTIONS ---
 
     // Handles adding items without a page reload
     async function addItem(event, form) {
@@ -265,6 +320,85 @@ const char index_html[] PROGMEM = R"rawliteral(
       await loadListsAndNetwork(); // Refresh just the lists
     }
 
+    // --- Save Interval ---
+    async function saveInterval(event, form) {
+      event.preventDefault();
+      const formData = new FormData(form);
+      const params = new URLSearchParams(formData);
+      
+      // Check if input is empty
+      const intervalVal = params.values().next().value;
+      
+      // Match the server's 10 second minimum
+      if (!intervalVal || intervalVal < 10) {
+        alert("Please enter an interval of 10 seconds or more.");
+        return;
+      }
+
+      await fetch(form.action + '?' + params.toString());
+      alert("Rotation interval saved!"); // Give user feedback
+    }
+
+    // --- Initialize the sortable lists ---
+    function initSortable() {
+      // Destroy old instances if they exist
+      if (stockSortable) stockSortable.destroy();
+      if (locationSortable) locationSortable.destroy();
+
+      const stockListEl = document.getElementById('stock-list');
+      const locationListEl = document.getElementById('location-list');
+      
+      stockSortable = new Sortable(stockListEl, {
+        animation: 150,
+        handle: '.drag-handle', // Use the drag handle
+        ghostClass: 'sortable-ghost', // Class for the placeholder
+        onEnd: () => saveListOrder('stocks') // Save when user drops
+      });
+
+      locationSortable = new Sortable(locationListEl, {
+        animation: 150,
+        handle: '.drag-handle',
+        ghostClass: 'sortable-ghost',
+        onEnd: () => saveListOrder('locations')
+      });
+    }
+
+    // --- Save the new list order ---
+    async function saveListOrder(type) {
+      const listEl = document.getElementById(type === 'stocks' ? 'stock-list' : 'location-list');
+      // Get an array of the text content from all items in the new order
+      const items = Array.from(listEl.querySelectorAll('.list-item-text')).map(span => span.textContent);
+      
+      // Send the entire new list to the server as a comma-separated string
+      // The server will parse it, overwrite the old list, and save it.
+      const listParam = encodeURIComponent(items.join(','));
+      
+      try {
+        await fetch(`/update_lists?type=${type}&list=${listParam}`);
+        console.log(`Saved new ${type} order`);
+      } catch (e) {
+        console.error("Failed to save list order", e);
+        alert("Failed to save new order. Check connection.");
+      }
+    }
+    
+    // --- Restore Defaults ---
+    async function restoreDefaults(event) {
+      event.preventDefault();
+      if (!confirm("Are you sure? This will delete your custom stock and weather lists and restore the firmware defaults.")) {
+        return;
+      }
+      
+      try {
+        await fetch('/restore_defaults');
+        console.log("Restored default lists.");
+        await loadListsAndNetwork(); // Refresh the UI
+      } catch (e) {
+        console.error("Failed to restore defaults", e);
+        alert("Failed to restore defaults. Check connection.");
+      }
+    }
+
     // Load and render lists from ESP32
     async function loadListsAndNetwork() {
       // Fetch lists
@@ -275,9 +409,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       stockListEl.innerHTML = ''; // Clear old list
       if (listData.stocks && listData.stocks.length > 0) {
         listData.stocks.forEach(ticker => {
+          // --- *** FIX: "class_name" changed to "class" *** ---
           stockListEl.innerHTML += `
             <div class="list-item">
-              <span>${ticker}</span>
+              <span class="drag-handle" title="Drag to reorder">&#9776;</span>
+              <span class="list-item-text">${ticker}</span>
               <span class="remove-btn" onclick="removeItem(event, '/remove_stock?ticker=${ticker}')" title="Remove">&times;</span>
             </div>
           `;
@@ -290,9 +426,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       locationListEl.innerHTML = ''; // Clear old list
       if (listData.locations && listData.locations.length > 0) {
         listData.locations.forEach(loc => {
+          // --- *** FIX: "class_name" changed to "class" *** ---
           locationListEl.innerHTML += `
             <div class="list-item">
-              <span>${loc}</span>
+              <span class="drag-handle" title="Drag to reorder">&#9776;</span>
+              <span class="list-item-text">${loc}</span>
               <span class="remove-btn" onclick="removeItem(event, '/remove_location?location=${encodeURIComponent(loc)}')" title="Remove">&times;</span>
             </div>
           `;
@@ -300,6 +438,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       } else {
         locationListEl.innerHTML = '<div class="empty-list">No locations in rotation.</div>';
       }
+
+      // --- Load interval time ---
+      if (listData.interval_sec) {
+        document.getElementById('interval-sec').value = listData.interval_sec;
+      }
+
+      // --- Initialize Sortable.js after lists are rendered ---
+      initSortable();
 
       // Fetch network status
       const networkResponse = await fetch('/get_network_status');
@@ -311,11 +457,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     // Initial load
     document.addEventListener('DOMContentLoaded', () => {
-        // Load lists for the active tab (which is 'fetch' by default)
-        // We only load when clicking the other tabs to save resources
+        // We only load lists when clicking the tabs to save resources
     });
     
-    // --- NEW: OTA Upload Handler ---
+    // --- OTA Upload Handler ---
     const updateForm = document.getElementById('update-form');
     const updateBtn = document.getElementById('update-btn');
     const progressBar = document.getElementById('progress-bar');

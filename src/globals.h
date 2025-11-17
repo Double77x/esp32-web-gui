@@ -44,6 +44,7 @@ extern std::vector<String> stockTickerList;
 extern std::vector<String> weatherLocationList;
 extern int currentStockIndex;
 extern int currentLocIndex;
+extern unsigned long rotationInterval;
 
 // ==========
 // Global Colors

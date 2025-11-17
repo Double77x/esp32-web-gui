@@ -13,18 +13,21 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <ESPmDNS.h> // For .local address
+#include <LittleFS.h>
+#include <FS.h>
 
 // =========================================================================
 // MODULE INCLUDES
 // =========================================================================
 #include "globals.h"
 #include "config.h"
-#include "secrets.h"
+#include "secrets.h" 
 #include "utils.h"
 #include "drawing.h"
 #include "stocks.h"
 #include "weather.h"
 #include "web_server.h"
+#include "persistence.h" // For persistence
 
 // =========================================================================
 // GLOBAL OBJECT DEFINITIONS (Matching externs in globals.h)
@@ -37,8 +40,8 @@ AsyncWebServer server(80);
 // Global State
 Page currentPage = PAGE_STOCKS;
 bool needsRedraw = true;
-String lastTicker = "SPY"; // Default for one-off fetch
-String lastWeatherLocation = "London"; // Default for one-off fetch
+String lastTicker; // Will be set by loadConfig
+String lastWeatherLocation; // Will be set by loadConfig
 bool inputUpdated = false;
 bool weatherInputUpdated = false;
 char upperString[100];
@@ -52,6 +55,7 @@ std::vector<String> stockTickerList;
 std::vector<String> weatherLocationList;
 int currentStockIndex = 0;
 int currentLocIndex = 0;
+unsigned long rotationInterval; // <-- THIS IS THE MISSING DEFINITION
 
 // Global Colors
 uint16_t CAT_BG;
@@ -95,9 +99,10 @@ void setup() {
   init_colors(); // From drawing.cpp
   tft.fillScreen(CAT_BG);
 
-  // --- 4. Populate default rotation lists (from secrets.h) ---
-  stockTickerList = defaultStockList;
-  weatherLocationList = defaultWeatherList;
+  // --- 4. Load Config from Flash ---
+  // This initializes LittleFS and loads all saved settings
+  // (WiFi, Lists, Timer) into the global variables.
+  loadConfig(); 
 
   // Set initial item to fetch
   if (!stockTickerList.empty()) {
@@ -107,16 +112,14 @@ void setup() {
     lastWeatherLocation = weatherLocationList[0];
   }
 
-  // --- 5. Connect to WiFi ---
-  currentSsid = ssid; // Init with default from config
-  currentPass = password; // Init with default from config
-
+  // --- 5. Connect to WiFi (using loaded creds) ---
+  // currentSsid and currentPass were set by loadConfig()
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname("esp32-web");
   WiFi.begin(currentSsid.c_str(), currentPass.c_str());
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {
     Serial.println("WiFi Failed!");
-    return;
+    // Even if WiFi fails, continue to start web server for OTA/config
   }
   Serial.println();
   Serial.print("IP Address: ");
@@ -140,7 +143,7 @@ void setup() {
   
   time_t now = time(nullptr);
   int retries = 0;
-  while (now < 1672531200L && retries < 30) { // Check against a recent-ish timestamp
+  while (now < 1672531200L && retries < 30) {
       Serial.print(".");
       delay(500);
       now = time(nullptr);
@@ -162,8 +165,6 @@ void setup() {
 // MAIN LOOP (The State Machine)
 // =========================================================================
 void loop() {
-  const long rotationInterval = 60000; // 1 minute
-
   if (lastRotationTime == 0) { // First-run initialization
       lastRotationTime = millis();
   }
@@ -171,38 +172,43 @@ void loop() {
   // 1. Check for user touch input
   checkTouch();
 
-  // 2. Check for web form (one-off stock)
+  // 2. Check for one-off web stock fetch
   if (inputUpdated) {
     inputUpdated = false;
     currentPage = PAGE_STOCKS;
     needsRedraw = true;
-    lastRotationTime = millis(); // Reset timer
+    lastRotationTime = millis(); // Reset rotation timer
   }
 
-  // 3. Check for web form (one-off weather)
+  // 3. Check for one-off web weather fetch
   if (weatherInputUpdated) {
     weatherInputUpdated = false;
     currentPage = PAGE_WEATHER;
     needsRedraw = true;
-    lastRotationTime = millis(); // Reset timer
+    lastRotationTime = millis(); // Reset rotation timer
   }
 
   // 4. Check for auto-rotation
   if (millis() - lastRotationTime > rotationInterval) {
+    lastRotationTime = millis();
+    
+    // Toggle the page
+    currentPage = (currentPage == PAGE_STOCKS) ? PAGE_WEATHER : PAGE_STOCKS;
+    
     if (currentPage == PAGE_STOCKS) {
+      // Advance to next stock in list
       if (!stockTickerList.empty()) {
         currentStockIndex = (currentStockIndex + 1) % stockTickerList.size();
         lastTicker = stockTickerList[currentStockIndex];
-        needsRedraw = true;
       }
-    } else { // currentPage == PAGE_WEATHER
+    } else {
+      // Advance to next location in list
       if (!weatherLocationList.empty()) {
         currentLocIndex = (currentLocIndex + 1) % weatherLocationList.size();
         lastWeatherLocation = weatherLocationList[currentLocIndex];
-        needsRedraw = true;
       }
     }
-    lastRotationTime = millis(); // Reset timer
+    needsRedraw = true;
   }
 
   // 5. Redraw the screen if needed
@@ -211,8 +217,8 @@ void loop() {
     
     if (currentPage == PAGE_STOCKS) {
       fetchAndDisplayTicker(lastTicker);
-    } else { // currentPage == PAGE_WEATHER
-      fetchAndDisplayWeather(lastWeatherLocation); // Pass the location name
+    } else {
+      fetchAndDisplayWeather(lastWeatherLocation);
     }
   }
 }
@@ -231,8 +237,9 @@ void checkTouch() {
     TS_Point p = ts.getPoint();
     
     if (p.z > 100 && p.z < 3000) {
-      lastTouchTime = millis();
+      lastTouchTime = millis(); // Used to debounce touch
       
+      // Convert raw ADC values to screen pixels
       int16_t x = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 320);
       int16_t y = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 240);
       
@@ -240,16 +247,8 @@ void checkTouch() {
       Serial.printf("[Raw: x=%d, y=%d] [Mapped: x=%d, y=%d]\n", p.x, p.y, x, y);
       
       currentPage = (currentPage == PAGE_STOCKS) ? PAGE_WEATHER : PAGE_STOCKS;
-      
-      // Load the current item for the page we just switched to
-      if (currentPage == PAGE_STOCKS && !stockTickerList.empty()) {
-        lastTicker = stockTickerList[currentStockIndex];
-      } else if (currentPage == PAGE_WEATHER && !weatherLocationList.empty()) {
-        lastWeatherLocation = weatherLocationList[currentLocIndex];
-      }
-
       needsRedraw = true;
-      lastRotationTime = millis(); // Reset rotation timer on manual change
+      lastRotationTime = millis(); // Also reset auto-rotation timer
     }
   }
 }
