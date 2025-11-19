@@ -6,177 +6,163 @@
 #include "utils.h"      // For HTTPSRequest, truncateDecimal
 #include <ArduinoJson.h>
 #include "Free_Fonts.h"
-#include <time.h>       // For getting timestamps
 
-// =========================================================================
-// --- NEW HELPER FUNCTION: High/Low/Current Price Bar ---
-// =========================================================================
-/**
- * @brief Draws a horizontal bar chart showing the day's low, high, and current price.
- * @param low The day's low price.
- * @param high The day's high price.
- * @param current The current price.
- * @param color The color for the current price indicator (green/red).
- */
+//  - Visualizing a layout with huge price, a grid for Open/Prev, and a progress bar for the day's range.
+
+// --- HELPER: Draw High/Low/Current Price Bar ---
 void drawPriceBar(float low, float high, float current, uint16_t color) {
-  // 1. Define chart boundaries
-  int chartX = 40;
-  int chartW = SCREEN_WIDTH - (chartX * 2); // 240px wide
-  int chartY = 185; // <-- Y position for the chart
+  // --- ADJUSTMENTS HERE ---
+  // Increased barX from 60 to 75 to shorten the bar width
+  // Moved barY from 205 to 190 to move it away from the footer
+  int barX = 75; 
+  int barY = 190; 
+  int barW = SCREEN_WIDTH - (barX * 2); // Width is calculated based on margins
+  int barH = 6; // Thickness of the bar
 
-  // Avoid division by zero if high and low are the same
-  if (high == low) {
-    low -= 0.01; // Prevent division by zero
-  }
-
-  // 2. Draw the main horizontal line
-  tft.drawFastHLine(chartX, chartY, chartW, CAT_MUTED);
-
-  // 3. Draw end ticks for Low and High
-  tft.drawFastVLine(chartX, chartY - 5, 11, CAT_MUTED); // Low tick
-  tft.drawFastVLine(chartX + chartW, chartY - 5, 11, CAT_MUTED); // High tick
-
-  // 4. Draw labels for Low and High
+  // 1. Draw Labels (Low on left, High on right)
   tft.setTextColor(CAT_MUTED, CAT_BG);
   #if USE_FREE_FONTS
     tft.setFreeFont(FSS9);
-    tft.setTextSize(1);
   #else
     tft.setTextFont(2);
-    tft.setTextSize(1);
   #endif
   
-  tft.setTextDatum(TC_DATUM); // Top-Center alignment
-  tft.drawString(String(low, 2), chartX, chartY + 10); // Label below tick
-  
-  tft.setTextDatum(TC_DATUM); // Top-Center alignment
-  tft.drawString(String(high, 2), chartX + chartW, chartY + 10); // Label below tick
+  // Draw Low Price (Right-aligned to the start of the bar)
+  tft.setTextDatum(MR_DATUM); 
+  tft.drawString(String(low, 2), barX - 8, barY + 3);
 
-  // 5. Calculate and draw the current price dot
+  // Draw High Price (Left-aligned to the end of the bar)
+  tft.setTextDatum(ML_DATUM); 
+  tft.drawString(String(high, 2), barX + barW + 8, barY + 3);
+
+  // 2. Draw the Background Bar (Pill shape)
+  tft.fillRoundRect(barX, barY, barW, barH, 3, CAT_MUTED);
+
+  // 3. Calculate Position of the dot
+  if (high == low) high += 0.01; // Prevent Div/0
   float range = high - low;
-  float norm_price = (current - low) / range;
+  float percent = (current - low) / range;
   
-  // Clamp value between 0.0 and 1.0 in case current is outside H/L
-  if (norm_price < 0.0) norm_price = 0.0;
-  if (norm_price > 1.0) norm_price = 1.0;
-  
-  int dot_x = chartX + (int)(norm_price * chartW);
-  
-  // Draw a circle for the current price
-  tft.fillCircle(dot_x, chartY, 6, color);
-  tft.drawCircle(dot_x, chartY, 6, CAT_TEXT); // White outline
+  // Clamp values to ensure dot stays inside the bar
+  if (percent < 0.0) percent = 0.0;
+  if (percent > 1.0) percent = 1.0;
+
+  int indicatorX = barX + (int)(percent * barW);
+
+  // 4. Draw Current Price Indicator
+  // The "CAT_BG" outline creates a clean separation "cutout" effect
+  tft.fillCircle(indicatorX, barY + 3, 6, color); 
+  tft.drawCircle(indicatorX, barY + 3, 6, CAT_BG); 
 }
 
-// =========================================================================
-// --- UPDATED: Main Fetch & Display Function ---
-// =========================================================================
+// --- MAIN FUNCTION ---
 void fetchAndDisplayTicker(String ticker) {
   Serial.print("Fetching data for: ");
   Serial.println(ticker);
 
-  drawHeader("Stocks"); // <-- FIX: Changed title
+  drawHeader("Stocks");
   drawFooter(PAGE_STOCKS);
-  drawStatusMessage("Fetching...", CAT_MUTED);
+  drawStatusMessage("Fetching quote...", CAT_MUTED);
 
-  // --- Step 1: Get CURRENT Quote ---
-  // This one API call has all the data we need (c, h, l, d, dp)
+  // --- Step 1: API Request ---
+  // Finnhub Quote Endpoint: c=Current, h=High, l=Low, o=Open, pc=PrevClose, d=Change, dp=Percent
   String quoteUrl = "https://finnhub.io/api/v1/quote?symbol=" + ticker + "&token=" + String(finnhub_api_key);
   String quoteResponse = HTTPSRequest(quoteUrl, test_root_ca);
 
-  // --- Add verbose logging for debugging quote ---
-  Serial.println("--- Finnhub Quote Response ---");
-  Serial.println(quoteResponse);
-  Serial.println("--------------------------------");
+  DynamicJsonDocument doc(1024);
+  DeserializationError error = deserializeJson(doc, quoteResponse);
 
-  DynamicJsonDocument quoteDoc(512); // Use Dynamic for safety
-  DeserializationError error = deserializeJson(quoteDoc, quoteResponse);
-
-  String price;
-  String change;
-  uint16_t changeColor = CAT_RED;
-  float val_h = 0.0, val_l = 0.0, val_c = 0.0;
-  bool dataValid = false;
+  // --- Step 2: Parse Data ---
+  // Default values
+  float current = 0.0, high = 0.0, low = 0.0, open = 0.0, prevClose = 0.0, change = 0.0, pctChange = 0.0;
+  bool valid = false;
 
   if (error) {
-    Serial.print("JSON parse error (Quote): ");
-    Serial.println(error.c_str());
-    price = "Error";
-    change = "Parse Error";
+    Serial.print("JSON Error: "); Serial.println(error.c_str());
+    drawStatusMessage("JSON Error", CAT_RED);
+  } else if (doc["c"].as<float>() == 0.0 && doc["h"].as<float>() == 0.0) {
+    // API returns 0s for invalid tickers
+    drawStatusMessage("Invalid Ticker", CAT_RED);
   } else {
-    // Parse all values from the single response
-    val_c = quoteDoc.containsKey("c") ? quoteDoc["c"].as<double>() : 0.0; // Current
-    val_h = quoteDoc.containsKey("h") ? quoteDoc["h"].as<double>() : 0.0; // High
-    val_l = quoteDoc.containsKey("l") ? quoteDoc["l"].as<double>() : 0.0; // Low
-    double d = quoteDoc.containsKey("d") ? quoteDoc["d"].as<double>() : 0.0; // Change
-    double dp = quoteDoc.containsKey("dp") ? quoteDoc["dp"].as<double>() : 0.0; // Pct Change
-    
-    if (val_c == 0.0 && val_h == 0.0 && val_l == 0.0) {
-      price = "N/A";
-      change = "No Data";
-      changeColor = CAT_MUTED;
-      dataValid = false;
-    } else {
-      dataValid = true;
-      price = String(val_c, 2);
-      change = String(d, 2);
-      double dp_trunc = truncateDecimal((float)dp);
-      change += " (" + String(dp_trunc, 2) + "%)";
-      if (d >= 0) {
-        change = "+" + change;
-        changeColor = CAT_GREEN;
-      } else {
-        changeColor = CAT_RED;
-      }
-    }
+    valid = true;
+    current = doc["c"].as<float>();
+    high = doc["h"].as<float>();
+    low = doc["l"].as<float>();
+    open = doc["o"].as<float>();
+    prevClose = doc["pc"].as<float>();
+    change = doc["d"].as<float>();
+    pctChange = doc["dp"].as<float>();
   }
 
-  // --- Step 2: Start Drawing ---
+  // --- Step 3: Draw UI ---
   tft.fillScreen(CAT_BG);
-  drawHeader("Stocks"); // <-- FIX: Changed title
+  drawHeader("Stocks");
   drawFooter(PAGE_STOCKS);
-  
-  tft.setTextDatum(MC_DATUM); 
+  tft.setTextDatum(MC_DATUM);
 
-  // --- Draw Ticker ---
-  tft.setTextColor(CAT_MUTED, CAT_BG);
-#if USE_FREE_FONTS
-  tft.setFreeFont(FSSB12);
-  tft.setTextSize(1);
-#else
-  tft.setTextFont(4);
-  tft.setTextSize(1);
-#endif
-  // Positioned neatly at the top
-  tft.drawString(ticker, SCREEN_WIDTH / 2, 65); // Y=65
-
-  // --- Draw Price ---
-  tft.setTextColor(CAT_TEXT, CAT_BG);
-#if USE_FREE_FONTS
-  tft.setFreeFont(FSSB24);
-  tft.setTextSize(1);
-#else
-  tft.setTextFont(8); 
-  tft.setTextSize(1);
-#endif
-  // Positioned as the main element
-  tft.drawString(price.startsWith("N/A") || price.startsWith("Error") ? price : "$" + price, SCREEN_WIDTH / 2, 105); // Y=105
-
-  // --- Draw Change ---
-  tft.setTextColor(changeColor, CAT_BG);
-#if USE_FREE_FONTS
-  tft.setFreeFont(FSSB12);
-  tft.setTextSize(1);
-#else
-  tft.setTextFont(4);
-  tft.setTextSize(1);
-#endif
-  // Positioned right below the price
-  tft.drawString(change, SCREEN_WIDTH / 2, 140); // Y=140
-
-  // --- Draw H/L/C Price Bar (NEW) ---
-  if (dataValid) {
-    drawPriceBar(val_l, val_h, val_c, changeColor);
-  } else {
-    Serial.println("Skipping price bar: Data is invalid or N/A.");
+  if (!valid) {
+    tft.setTextColor(CAT_RED, CAT_BG);
+    tft.drawString("Data Unavailable", SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+    return;
   }
+
+  // Determine Color (Green for up, Red for down)
+  uint16_t color = (change >= 0) ? CAT_GREEN : CAT_RED;
+  String sign = (change >= 0) ? "+" : "";
+
+  // 3a. Ticker Symbol (Top)
+  tft.setTextColor(CAT_MUTED, CAT_BG);
+  #if USE_FREE_FONTS
+  tft.setFreeFont(FSSB12);
+  #else
+  tft.setTextFont(4);
+  #endif
+  tft.drawString(ticker, SCREEN_WIDTH / 2, 55); 
+
+  // 3b. Current Price (Huge, Center)
+  tft.setTextColor(CAT_TEXT, CAT_BG);
+  #if USE_FREE_FONTS
+  tft.setFreeFont(FSSB24);
+  #else
+  tft.setTextFont(8);
+  #endif
+  tft.drawString("$" + String(current, 2), SCREEN_WIDTH / 2, 90);
+
+  // 3c. Change & Percent (Below Price)
+  String changeStr = sign + String(change, 2) + " (" + sign + String(pctChange, 2) + "%)";
+  tft.setTextColor(color, CAT_BG);
+  #if USE_FREE_FONTS
+  tft.setFreeFont(FSSB12); // Bold medium
+  #else
+  tft.setTextFont(4);
+  #endif
+  tft.drawString(changeStr, SCREEN_WIDTH / 2, 125);
+
+  // 3d. Secondary Info Grid (Open | Prev Close)
+  int midY = 165;
+  int leftX = SCREEN_WIDTH / 4;
+  int rightX = (SCREEN_WIDTH / 4) * 3;
+
+  // Labels
+  tft.setTextColor(CAT_MUTED, CAT_BG);
+  #if USE_FREE_FONTS
+  tft.setFreeFont(FSS9); // Small
+  #else
+  tft.setTextFont(2);
+  #endif
+  tft.drawString("OPEN", leftX, midY);
+  tft.drawString("PREV CLOSE", rightX, midY);
+
+  // Values
+  tft.setTextColor(CAT_TEXT, CAT_BG);
+  #if USE_FREE_FONTS
+  tft.setFreeFont(FSSB9); // Bold Small
+  #else
+  tft.setTextFont(2);
+  #endif
+  tft.drawString(String(open, 2), leftX, midY + 18);
+  tft.drawString(String(prevClose, 2), rightX, midY + 18);
+
+  // 3e. Day Range Bar (Bottom)
+  drawPriceBar(low, high, current, color);
 }

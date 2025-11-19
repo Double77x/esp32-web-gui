@@ -57,15 +57,6 @@ int currentStockIndex = 0;
 int currentLocIndex = 0;
 unsigned long rotationInterval; // <-- THIS IS THE MISSING DEFINITION
 
-// Global Colors
-uint16_t CAT_BG;
-uint16_t CAT_TEXT;
-uint16_t CAT_MUTED;
-uint16_t CAT_ACCENT;
-uint16_t CAT_GREEN;
-uint16_t CAT_RED;
-uint16_t CAT_SURFACE;
-
 // =========================================================================
 // FILE-SCOPE STATIC VARIABLES
 // =========================================================================

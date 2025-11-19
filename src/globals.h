@@ -4,8 +4,8 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <ESPAsyncWebServer.h>
-#include <vector>        // <-- Added for lists
-#include <Arduino.h>     // <-- Added for String
+#include <vector>        // For lists
+#include <Arduino.h>     // For String
 
 // ==========
 // Enum Definitions
@@ -32,7 +32,7 @@ extern bool weatherInputUpdated; // One-off weather fetch
 extern char upperString[100];
 
 // ==========
-// Network State (NEW)
+// Network State
 // ==========
 extern String currentSsid;
 extern String currentPass;
@@ -49,10 +49,17 @@ extern unsigned long rotationInterval;
 // ==========
 // Global Colors
 // ==========
-extern uint16_t CAT_BG;
-extern uint16_t CAT_TEXT;
-extern uint16_t CAT_MUTED;
-extern uint16_t CAT_ACCENT;
-extern uint16_t CAT_GREEN;
-extern uint16_t CAT_RED;
-extern uint16_t CAT_SURFACE;
+// UI Basics
+extern uint16_t CAT_BG;      // Background
+extern uint16_t CAT_TEXT;    // Main Text
+extern uint16_t CAT_MUTED;   // Secondary/Dim Text
+extern uint16_t CAT_ACCENT;  // Highlights
+extern uint16_t CAT_SURFACE; // Card backgrounds/Headers
+
+// Indicators
+extern uint16_t CAT_GREEN;   // Positive/Go
+extern uint16_t CAT_RED;     // Negative/Stop
+extern uint16_t CAT_YELLOW;  // Sun/Lightning/Warnings
+extern uint16_t CAT_BLUE;    // Rain/Water
+extern uint16_t CAT_WHITE;   // Pure White (High Contrast)
+extern uint16_t CAT_GREY;    // Neutral/Clouds

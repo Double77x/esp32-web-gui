@@ -4,7 +4,28 @@
 #include "Free_Fonts.h"
 #include <WiFi.h>       // For WiFi.localIP()
 
-// Converts a 24-bit hex color to the 16-bit 565 format
+// =====================================================
+// --- COLOR DEFINITIONS ---
+// These create the actual variables in memory.
+// =====================================================
+uint16_t CAT_BG;
+uint16_t CAT_TEXT;
+uint16_t CAT_MUTED;
+uint16_t CAT_ACCENT;
+uint16_t CAT_SURFACE;
+uint16_t CAT_GREEN;
+uint16_t CAT_RED;
+
+// New Colors for Weather/Stocks
+uint16_t CAT_YELLOW;
+uint16_t CAT_BLUE;
+uint16_t CAT_WHITE;
+uint16_t CAT_GREY;
+
+// =====================================================
+// --- INTERNAL HELPER ---
+// Converts 24-bit hex (HTML style) to 16-bit 565 (TFT style)
+// =====================================================
 uint16_t color_from_hex(uint32_t hex) {
   uint8_t r = (hex >> 16) & 0xFF;
   uint8_t g = (hex >> 8) & 0xFF;
@@ -12,16 +33,33 @@ uint16_t color_from_hex(uint32_t hex) {
   return tft.color565(r, g, b);
 }
 
-// Initializes the global color variables
+// =====================================================
+// --- INITIALIZE COLORS ---
+// Call this in setup() before drawing anything!
+// Using "Catppuccin Mocha" palette for modern look
+// =====================================================
 void init_colors() {
-  CAT_BG    = color_from_hex(0x1E1E2E);
-  CAT_TEXT  = color_from_hex(0xDCE0E8);
-  CAT_MUTED = color_from_hex(0x6E6C7E);
-  CAT_ACCENT = color_from_hex(0xC6A0F6);
-  CAT_GREEN = color_from_hex(0xABE9B3);
-  CAT_RED   = color_from_hex(0xF28FAD);
-  CAT_SURFACE = color_from_hex(0x11111B);
+  // Base UI
+  CAT_BG      = color_from_hex(0x1E1E2E); // Base
+  CAT_TEXT    = color_from_hex(0xCDD6F4); // Text
+  CAT_MUTED   = color_from_hex(0x6C7086); // Overlay0
+  CAT_ACCENT  = color_from_hex(0xCBA6F7); // Mauve
+  CAT_SURFACE = color_from_hex(0x181825); // Mantle (Darker header)
+
+  // Functional Colors
+  CAT_GREEN   = color_from_hex(0xA6E3A1); // Green
+  CAT_RED     = color_from_hex(0xF38BA8); // Red
+  
+  // New Colors for Weather/Stocks
+  CAT_YELLOW  = color_from_hex(0xF9E2AF); // Yellow
+  CAT_BLUE    = color_from_hex(0x89B4FA); // Blue
+  CAT_WHITE   = color_from_hex(0xFFFFFF); // Pure White
+  CAT_GREY    = color_from_hex(0x9399B2); // Overlay1 (Lighter than muted)
 }
+
+// =====================================================
+// --- DRAWING FUNCTIONS ---
+// =====================================================
 
 // Draws the top header bar with title and network status
 void drawHeader(String title) {
@@ -40,13 +78,11 @@ void drawHeader(String title) {
   tft.setTextDatum(ML_DATUM);
   tft.drawString(" " + title, 8, HEADER_H / 2);
 
-  // --- MODIFIED BLOCK ---
+  // Draw Network Info on the right
   tft.setTextColor(CAT_MUTED, CAT_SURFACE);
   tft.setTextDatum(MR_DATUM);
-  // Show SSID and IP
   String networkInfo = currentSsid + " (" + WiFi.localIP().toString() + ")";
   tft.drawString(networkInfo, SCREEN_WIDTH - 8, HEADER_H / 2);
-  // --- END MODIFIED BLOCK ---
 }
 
 // Draws the bottom footer bar with page toggle hint
@@ -73,11 +109,12 @@ void drawFooter(Page page) {
   tft.drawString(footer_text, SCREEN_WIDTH / 2, SCREEN_HEIGHT - (FOOTER_H / 2));
 }
 
-// --- NEW FUNCTION ---
 // Redraws just the network info part of the header after a reconnect
 void updateHeaderIP() {
   // Clear the right side of the header
   tft.fillRect(SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2, HEADER_H, CAT_SURFACE);
+  tft.drawLine(0, HEADER_H, SCREEN_WIDTH, HEADER_H, CAT_ACCENT); // Redraw line segment
+
   tft.setTextColor(CAT_MUTED, CAT_SURFACE);
 #if USE_FREE_FONTS
   tft.setFreeFont(FSS9);
@@ -90,7 +127,6 @@ void updateHeaderIP() {
   String networkInfo = currentSsid + " (" + WiFi.localIP().toString() + ")";
   tft.drawString(networkInfo, SCREEN_WIDTH - 8, HEADER_H / 2);
 }
-// --- END NEW FUNCTION ---
 
 // Draws a large status message in the center of the screen
 void drawStatusMessage(const String& msg, uint16_t color) {
@@ -107,23 +143,4 @@ void drawStatusMessage(const String& msg, uint16_t color) {
 #endif
   
   tft.drawString(msg, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
-}
-
-// Draws the decorative "terminal" frame for the stock page
-void drawTerminalFrame() {
-  int margin = 10;
-  int lineY1 = HEADER_H + 45; 
-  int lineY2 = SCREEN_HEIGHT - FOOTER_H - 45;
-  
-  tft.setTextFont(1);
-  tft.setTextSize(2); 
-  tft.setTextColor(CAT_MUTED, CAT_BG);
-
-  tft.drawChar('+', margin, lineY1 - 4, 1); 
-  tft.drawFastHLine(margin + 8, lineY1, SCREEN_WIDTH - (margin * 2) - 8, CAT_MUTED);
-  tft.drawChar('+', SCREEN_WIDTH - margin - 8, lineY1 - 4, 1);
-
-  tft.drawChar('+', margin, lineY2 - 4, 1);
-  tft.drawFastHLine(margin + 8, lineY2, SCREEN_WIDTH - (margin * 2) - 8, CAT_MUTED);
-  tft.drawChar('+', SCREEN_WIDTH - margin - 8, lineY2 - 4, 1);
 }
